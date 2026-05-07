@@ -1,0 +1,335 @@
+\documentclass[10pt, aspectratio=169]{beamer}
+
+\usepackage{fontspec}
+\usepackage[russian]{babel}
+
+\setsansfont{Arial} 
+\setmonofont{Courier New} 
+
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{booktabs}
+\usepackage{multicol}
+
+\definecolor{mainblue}{RGB}{40, 50, 180}
+\definecolor{codebg}{RGB}{245, 245, 245}
+\definecolor{codegray}{RGB}{120, 120, 120}
+\definecolor{stringred}{RGB}{180, 40, 40}
+\definecolor{keywordblue}{RGB}{0, 0, 255}
+
+\setbeamercolor{palette primary}{bg=mainblue, fg=white}
+\setbeamercolor{title}{bg=mainblue, fg=white}
+\setbeamercolor{frametitle}{bg=mainblue, fg=white}
+\setbeamercolor{structure}{fg=mainblue}
+\setbeamercolor{itemize item}{fg=mainblue}
+
+\setbeamertemplate{footline}{
+  \begin{beamercolorbox}[wd=\paperwidth, ht=3ex, dp=1.5ex, leftskip=3mm, rightskip=3mm]{palette primary}
+    \fontsize{6pt}{6pt}\selectfont Максим Емельянов, Литвинов Юрий \hfill С++ Семинар \hfill \insertframenumber{} / \inserttotalframenumber
+  \end{beamercolorbox}
+}
+\setbeamertemplate{navigation symbols}{} 
+
+\lstset{
+    backgroundcolor=\color{codebg},
+    basicstyle=\ttfamily\scriptsize,
+    keywordstyle=\color{keywordblue}\bfseries,
+    stringstyle=\color{stringred},
+    commentstyle=\color{green!50!black},
+    numbers=none,
+    breaklines=true,
+    frame=single,
+    rulecolor=\color{gray!30},
+    showstringspaces=false,
+    tabsize=4,
+    keepspaces=true
+}
+
+\title{Динамический полиморфизм в C++}
+\subtitle{Механика vtable, цена абстракции и современные альтернативы}
+\author{Максим Емельянов \and Литвинов Юрий}
+\date{C++ Семинар \\ \today}
+
+\begin{document}
+
+\begin{frame}[plain]
+    \titlepage
+\end{frame}
+
+\begin{frame}{План}
+    \tableofcontents
+\end{frame}
+
+\section{Часть 1: Механика vtable}
+
+\begin{frame}{Что такое полиморфизм? Раннее vs Позднее связывание}
+    \begin{itemize}
+        \item \textbf{Динамический полиморфизм}~--- механизм, при котором программа определяет точный адрес вызываемой функции во время выполнения программы (Runtime), исходя из реального типа объекта в памяти.
+        \vspace{0.3cm}
+        \item \textbf{Раннее связывание (Early binding):}\\
+        Вызов функции привязывается к указателю на этапе компиляции. Не подходит для восходящего преобразования (upcast).
+        \vspace{0.3cm}
+        \item \textbf{Позднее связывание (Late binding):}\\
+        Гарантирует вызов правильной версии функции для конкретного объекта, независимо от типа ссылки. В С++ реализуется через \texttt{virtual}.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Взгляд под капот: vptr и vtable}
+    При добавлении \texttt{virtual} компилятор неявно добавляет в объект указатель \textbf{vptr}, который ссылается на \textbf{vtable} (таблицу виртуальных методов).
+
+    \vspace{0.3cm}
+    \textbf{Как выглядит вызов в ассемблере (GCC):}
+\begin{lstlisting}[language={[x86masm]Assembler}]
+mov rbp, QWORD PTR [rbx]   ; В регистр rbp помещаем указатель на объект
+mov rax, QWORD PTR [rbp+0] ; В rax помещаем указатель на vtable - разыменование 1
+call [QWORD PTR [rax]]     ; Вызов функции по адресу из vtable - разыменование 2
+\end{lstlisting}
+
+    \begin{itemize}
+        \item \textbf{Преимущество:} Правильный вызов метода дочернего класса.
+        \item \textbf{Недостаток:} Затраты на двойное обращение к памяти.
+    \end{itemize}
+\end{frame}
+
+\section{Часть 2: Классический подход и шаблоны}
+
+\begin{frame}[fragile]{Классический пример: Иерархия (С++98)}
+\begin{lstlisting}[language=C++]
+class Property {
+protected:
+    double worth;
+public:
+    Property(double worth) : worth(worth) {}
+    virtual double getTax() const = 0; // Чисто виртуальный метод
+};
+
+class Car : public Property {
+public:
+    Car(double worth) : Property(worth) {}
+    double getTax() const override { return worth / 200; }
+};
+
+// Использование:
+Property* p = new Car(400000);
+std::cout << p->getTax(); // Вызовется Car::getTax()
+\end{lstlisting}
+\end{frame}
+
+\begin{frame}[fragile]{Статическая имитация (Шаблоны)}
+Можно избежать \texttt{vtable}, используя шаблоны:
+\begin{lstlisting}[language=C++]
+template <typename T>
+class Base {
+public:
+    void someFunctionality() {
+        static_cast<T*>(this)->someFunctionality();
+    }
+};
+
+class Child : public Base<Child> {
+public:
+    void someFunctionality() {
+        cout << "Child class perform new function..." << endl;
+    }
+};
+\end{lstlisting}
+    \textbf{Итог:} Ускоряет работу (нет vtable), но может сильно раздуть бинарник (каждый тип генерирует новый класс).
+\end{frame}
+
+\section{Часть 3: std::variant}
+
+\begin{frame}[fragile]{Альтернатива C++17: std::variant + std::visit}
+\begin{lstlisting}[language=C++]
+class Derived {
+public: void PrintName() const { std::cout << "calling Derived!\n"; }
+};
+class ExtraDerived {
+public: void PrintName() const { std::cout << "calling ExtraDerived!\n"; }
+};
+
+int main() {
+    std::variant<Derived, ExtraDerived> var = Derived{};
+    
+    // Вызов через лямбду (visitor)
+    auto caller = [](const auto& obj) { obj.PrintName(); };
+    std::visit(caller, var);
+}
+\end{lstlisting}
+\end{frame}
+
+\begin{frame}{Плюсы и минусы std::variant}
+    \begin{columns}[T]
+        \begin{column}{0.5\textwidth}
+            \textbf{\color{mainblue}Преимущества:}
+            \begin{itemize}
+                \item \textbf{Value semantics:} объекты хранятся без \texttt{new/delete}.
+                \item \textbf{Нет базы:} классы могут быть не связаны иерархией.
+                \item \textbf{Duck typing:} сигнатуры не обязаны строго совпадать.
+            \end{itemize}
+        \end{column}
+        
+        \begin{column}{0.5\textwidth}
+            \textbf{\color{stringred}Недостатки:}
+            \begin{itemize}
+                \item Все типы должны быть известны \textbf{заранее} (плохо для плагинов).
+                \item \textbf{Перерасход памяти:} размер равен самому большому типу + тег (теряем байты на мелких объектах).
+            \end{itemize}
+        \end{column}
+    \end{columns}
+\end{frame}
+\section{Часть 4: Полиморфизм в Go}
+
+\begin{frame}[fragile]{Альтернативный взгляд: Полиморфизм в Go}
+    \begin{itemize}
+        \item \textbf{Duck Typing}: неявная реализация интерфейсов.
+        \item Нет наследования.
+        \item Если тип содержит методы интерфейса~--- он его реализует.
+    \end{itemize}
+
+\begin{lstlisting}[language=Go, basicstyle=\tiny, backgroundcolor=\color{gray!10}]
+type Geometry interface {
+    Area() float64
+}
+
+type Rect struct { Width, Height float64 }
+func (r Rect) Area() float64 { return r.Width * r.Height }
+
+func Measure(g Geometry) {
+    fmt.Println(g.Area())
+}
+
+func main() {
+    r := Rect{Width: 3, Height: 4}
+    Measure(r) // Работает автоматически
+}
+\end{lstlisting}
+\end{frame}
+
+\begin{frame}[fragile]{Взгляд на реализацию интерфейсов в Go}
+    Переменная интерфейса в Go (\texttt{iface})~--- это структура из двух указателей:
+    
+\begin{lstlisting}[language=Go, basicstyle=\small, backgroundcolor=\color{gray!10}]
+type iface struct {
+    tab  *itab          // Указатель на таблицу интерфейсов
+    data unsafe.Pointer // Указатель на реальные данные
+}
+\end{lstlisting}
+
+    \begin{itemize}
+        \item \textbf{itab (Interface Table)}: содержит метаданные типа и список указателей на функции. Схожа с vtable в C++.
+        \item \textbf{Динамика и кэш}: itab генерируется в рантайме при первом сопоставлении пары "Интерфейс-Тип" и кэшируется.
+        \item \textbf{Экономия}: в отличие от C++, объект не содержит \texttt{vptr}, если он не используется через интерфейс.
+    \end{itemize}
+\end{frame}
+
+\section{Часть 5: Полиморфизм в Rust}
+
+
+\begin{frame}[fragile]
+\frametitle{Динамический полиморфизм в Rust: Traits}
+\begin{itemize}
+    \item \textbf{Трейты (Traits):} Описывают общее поведение типов.
+    \item \textbf{dyn:} Ключевое слово для обозначения динамической диспетчеризации.
+    \item \textbf{Box<dyn Trait>:} Так как размер объекта неизвестен при компиляции, работа всегда идет через указатель.
+\end{itemize}
+
+\begin{lstlisting}[language=C++, basicstyle=\tiny, keywordstyle=\color{blue}]
+trait Animal { fn make_sound(&self); }
+struct Dog;
+impl Animal for Dog {
+    fn make_sound(&self) { println!("Woof!"); }
+}
+
+fn main() {
+    let animals: Vec<Box<dyn Animal>> = vec![
+        Box::new(Dog),
+        Box::new(Cat),
+    ];
+    for a in animals { a.make_sound(); }
+}
+\end{lstlisting}
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Под капотом Rust: Fat Pointers}
+В отличие от C++, Rust не хранит \texttt{vptr} внутри объекта. Вместо этого используется \textbf{толстый указатель} (16 байт на x64):
+
+\vspace{0.5cm}
+\begin{center}
+\begin{tabular}{|c|c|}
+\hline
+\textbf{Data Pointer (8 byte)} & \textbf{vtable Pointer (8 byte)} \\ \hline
+Адрес данных в памяти & Адрес таблицы методов \\ \hline
+\end{tabular}
+\end{center}
+\vspace{0.5cm}
+
+\begin{itemize}
+    \item \textbf{Преимущество:} Объекты «чистые», не занимают лишнюю память, если не используются полиморфно.
+    \item \textbf{vtable содержит:}
+    \begin{itemize}
+        \item Указатель на деструктор.
+        \item Размер типа и выравнивание (\textit{size, align}).
+        \item Адреса реализаций методов трейта.
+    \end{itemize}
+\end{itemize}
+\end{frame}
+
+\begin{frame}
+\frametitle{Rust dyn против Go Interface}
+Хотя оба языка имеют похожие механизмы полиморфизма, имеются следующие различия:
+\vspace{0.3cm}
+\begin{enumerate}
+    \item \textbf{Статика (Rust) vs Динамика (Go):}
+    \begin{itemize}
+        \item В Rust vtable строится \textbf{на этапе компиляции}. Вызов максимально дешев.
+        \item В Go \texttt{itab} может генерироваться \textbf{в рантайме} (через хеш-таблицы) при первом приведении типов.
+    \end{itemize}
+    \item \textbf{Явность (Explicit) vs Неявность (Implicit):}
+    \begin{itemize}
+        \item В Go реализация неявная: совпали сигнатуры~--- интерфейс реализован.
+        \item В Rust требуется явный \texttt{impl Trait for Struct}, что исключает ошибки «случайного» совпадения имен.
+    \end{itemize}
+\end{enumerate}
+\end{frame}
+
+\section{Часть 6: Сравнение подходов}
+
+\begin{frame}
+\frametitle{Итоговое сравнение подходов}
+\small
+\begin{table}
+\centering
+\begin{tabular}{|l|l|l|l|l|}
+\hline
+\textbf{Критерий} & \textbf{C++ Virtual} & \textbf{C++ variant} & \textbf{Go} & \textbf{Rust} \\ \hline
+\textbf{Связывание} & Runtime (vtable) & Runtime (index) & Runtime (itab) & Runtime (vtable) \\ \hline
+\textbf{Разметка} & Содержит vptr & Данные + тег & Чистый объект & Чистый объект \\ \hline
+\textbf{Расширение} & Легко & Сложно & Легко & Легко \\ \hline
+\textbf{Инлайнинг} & Почти никогда & Часто & Редко & Редко \\ \hline
+\end{tabular}
+\end{table}
+\end{frame}
+
+\begin{frame}
+\frametitle{Заключение: Что быстрее?}
+\begin{itemize}
+    \item \textbf{std::variant}~--- потенциально самый быстрый за счет локальности данных и инлайнинга (для небольшого набора типов).
+    
+    \item \textbf{vtable (C++)}~--- стандарт для больших иерархий. Основные затраты: хранение \texttt{vptr} в каждом объекте и двойное разыменовывание при вызове.
+    
+    \item \textbf{Rust dyn}~--- предлагает баланс: объекты остаются «чистыми» (без \texttt{vptr}), а таблицы методов генерируются во время компиляции. Это дает производительность уровня C++.
+    
+    \item \textbf{Интерфейсы Go}~--- гибкий подход (Duck Typing). Удобен для крупных систем, но несет небольшие расходы на построение таблиц \texttt{itab} в рантайме.
+
+    \item \textbf{Выбор зависит от задачи:} 
+    \begin{itemize}
+        \item Максимальная скорость: \texttt{std::variant} / Rust.
+        \item Гибкость архитектуры: Go / Rust.
+        \item Сложные иерархии наследования: C++ (\texttt{virtual}).
+    \end{itemize}
+\end{itemize}
+\end{frame}
+
+\end{document}
