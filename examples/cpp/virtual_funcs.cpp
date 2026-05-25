@@ -18,4 +18,5 @@ int main() {
   // Использование:
   Property *p = new Car(400000);
   std::cout << p->getTax(); // Вызовется Car::getTax()
+	return 0;
 }

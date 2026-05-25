@@ -10,7 +10,7 @@
 \usepackage{listings}
 \usepackage{booktabs}
 \usepackage{multicol}
-
+\usepackage{tikz}
 \definecolor{mainblue}{RGB}{40, 50, 180}
 \definecolor{codebg}{RGB}{245, 245, 245}
 \definecolor{codegray}{RGB}{120, 120, 120}
@@ -46,7 +46,6 @@
 }
 
 \title{Динамический полиморфизм в C++}
-\subtitle{Механика vtable, цена абстракции и современные альтернативы}
 \author{Максим Емельянов \and Литвинов Юрий}
 \date{C++ Семинар \\ \today}
 
@@ -88,6 +87,15 @@ call [QWORD PTR [rax]]     ; Вызов функции по адресу из vt
     \begin{itemize}
         \item \textbf{Преимущество:} Правильный вызов метода дочернего класса.
         \item \textbf{Недостаток:} Затраты на двойное обращение к памяти.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Генерация vtable при наследовании}
+    Как компилятор строит \texttt{vtable} для иерархии классов:
+    \begin{itemize}
+        \item \textbf{Базовый класс:} Создается массив указателей на виртуальные методы.
+        \item \textbf{Одиночное наследование:} Дочерний класс копирует \texttt{vtable} родителя, заменяет адреса переопределенных (\texttt{override}) методов на свои и добавляет новые в конец.
+        \item \textbf{Множественное наследование:} Объект содержит несколько \texttt{vptr}. Компилятор генерирует сложные таблицы с \textit{thunks} (переходниками) для корректировки указателя \texttt{this} перед вызовом.
     \end{itemize}
 \end{frame}
 
@@ -275,6 +283,57 @@ fn main() {
     \end{itemize}
 \end{itemize}
 \end{frame}
+
+\begin{frame}[fragile]
+\frametitle{Расположение \texttt{Box<dyn Trait>} в памяти}
+
+При использовании \texttt{Box<dyn Trait>} данные распределяются между стеком, кучей и статической памятью:
+
+\vspace{0.4cm}
+\begin{center}
+\begin{tikzpicture}[
+    >=stealth, 
+    box/.style={draw=gray!30, fill=gray!5, thick, rounded corners=4pt, inner sep=8pt},
+    ptr/.style={draw=mainblue!80, fill=white, thick, rounded corners=2pt, minimum width=3.6cm, minimum height=0.7cm, font=\small\ttfamily},
+    vptr/.style={ptr, draw=green!60!black},
+    arrow/.style={->, thick, draw=gray!60, rounded corners=3pt} 
+]
+
+
+\node[anchor=south west, font=\bfseries, text=mainblue] at (0, 2.6) {Стек (Stack)};
+\draw[draw=mainblue!40, fill=mainblue!5, thick, rounded corners=4pt] (0, -1.7) rectangle (4.4, 2.5);
+\node[anchor=north, align=center, font=\small] at (2.2, 2.3) {\textbf{Box} (Fat Pointer)\\ \scriptsize 16 байт на x64};
+
+
+\node[ptr] (dataptr) at (2.2, 1.1) {Data Ptr};
+\node[vptr] (vtableptr) at (2.2, -0.6) {vtable Ptr};
+
+
+\node[anchor=south west, font=\bfseries, text=stringred] at (5.5, 3.6) {Куча (Heap)};
+\node[box, draw=stringred!50, fill=stringred!5, text width=6.0cm, anchor=north west] (heap) at (5.5, 3.4) {
+    \textbf{Поля объекта} \\[-0.5ex]
+    {\color{gray!40}\rule{\linewidth}{0.5pt}} \\
+    Поля конкретной структуры (например, данные внутри \texttt{Dog}).
+};
+
+
+\node[anchor=south west, font=\bfseries, text=green!60!black] at (5.5, 0.4) {Статическая память (RODATA)};
+\node[box, draw=green!60!black!50, fill=green!60!black!5, text width=6.0cm, anchor=north west] (rodata) at (5.5, 0.3) {
+    \textbf{\texttt{vtable} для \texttt{Dog}:} \\[-0.5ex]
+    {\color{gray!40}\rule{\linewidth}{0.5pt}} \\
+    {\color{green!60!black}$\bullet$} \texttt{size} и \texttt{align} \\
+    {\color{green!60!black}$\bullet$} \texttt{drop\_in\_place} \\
+    {\color{green!60!black}$\bullet$} Указатель на \texttt{make\_sound()}
+};
+
+
+\draw[arrow, mainblue!80] (dataptr.east) -- ++(0.4,0) |- (heap.west);
+\draw[arrow, green!60!black] (vtableptr.east) -- ++(0.4,0) |- (rodata.west);
+
+\end{tikzpicture}
+\end{center}
+\end{frame}
+
 
 \begin{frame}
 \frametitle{Rust dyn против Go Interface}
